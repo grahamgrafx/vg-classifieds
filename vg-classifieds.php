@@ -131,6 +131,9 @@ if ( ! class_exists( 'NCI_Classifieds_Importer', false ) ) {
 		const META_SOURCE_FILE = '_nci_source_file';
 		const META_SOURCE_HASH = '_nci_source_hash';
 		const META_RAW_HTML    = '_nci_raw_html';
+		const MAX_ZIP_BYTES    = 26214400; // 25 MB.
+		const MAX_ZIP_ENTRIES  = 2000;
+		const MAX_HTML_BYTES   = 2097152; // 2 MB per HTML file.
 
 		public static function init() {
 			add_action( 'init', array( __CLASS__, 'register_cpt' ) );
@@ -143,7 +146,18 @@ if ( ! class_exists( 'NCI_Classifieds_Importer', false ) ) {
 				self::CPT,
 				array(
 					'labels'       => array(
-						'name' => __( 'Classifieds', 'vg-classifieds' ),
+						'name'               => __( 'Classifieds', 'vg-classifieds' ),
+						'singular_name'      => __( 'Classified', 'vg-classifieds' ),
+						'menu_name'          => __( 'Classifieds', 'vg-classifieds' ),
+						'all_items'          => __( 'All Classifieds', 'vg-classifieds' ),
+						'add_new'            => __( 'Add New', 'vg-classifieds' ),
+						'add_new_item'       => __( 'Add New Classified', 'vg-classifieds' ),
+						'edit_item'          => __( 'Edit Classified', 'vg-classifieds' ),
+						'new_item'           => __( 'New Classified', 'vg-classifieds' ),
+						'view_item'          => __( 'View Classified', 'vg-classifieds' ),
+						'search_items'       => __( 'Search Classifieds', 'vg-classifieds' ),
+						'not_found'          => __( 'No classifieds found.', 'vg-classifieds' ),
+						'not_found_in_trash' => __( 'No classifieds found in Trash.', 'vg-classifieds' ),
 					),
 					'public'       => true,
 					'show_in_rest' => true,
@@ -275,8 +289,12 @@ if ( ! class_exists( 'NCI_Classifieds_Importer', false ) ) {
 			$trusted = ! empty( $_POST['nci_trusted_html'] ) && current_user_can( 'manage_options' );
 
 			$tmp      = $_FILES['nci_zip']['tmp_name'];
+			$zip_size = isset( $_FILES['nci_zip']['size'] ) ? (int) $_FILES['nci_zip']['size'] : 0;
 			$zip_name = isset( $_FILES['nci_zip']['name'] ) ? sanitize_file_name( wp_unslash( $_FILES['nci_zip']['name'] ) ) : '';
 			$ftype    = wp_check_filetype_and_ext( $tmp, $zip_name );
+			$max_zip  = (int) apply_filters( 'vg_classifieds_max_zip_bytes', self::MAX_ZIP_BYTES );
+			$max_zip_entries = (int) apply_filters( 'vg_classifieds_max_zip_entries', self::MAX_ZIP_ENTRIES );
+			$max_html_bytes = (int) apply_filters( 'vg_classifieds_max_html_bytes', self::MAX_HTML_BYTES );
 
 			if ( ! empty( $ftype['ext'] ) && 'zip' !== $ftype['ext'] ) {
 				return array(
@@ -284,6 +302,18 @@ if ( ! class_exists( 'NCI_Classifieds_Importer', false ) ) {
 					'rows'    => array(),
 				);
 			}
+
+			if ( $zip_size > 0 && $zip_size > $max_zip ) {
+				return array(
+					'message' => sprintf(
+						/* translators: %d: max upload size in MB */
+						__( 'ZIP is too large. Max allowed is %d MB.', 'vg-classifieds' ),
+						(int) floor( $max_zip / 1048576 )
+					),
+					'rows'    => array(),
+				);
+			}
+
 			$zip = new ZipArchive();
 
 			if ( true !== $zip->open( $tmp ) ) {
@@ -292,31 +322,47 @@ if ( ! class_exists( 'NCI_Classifieds_Importer', false ) ) {
 					'rows'    => array(),
 				);
 			}
+			if ( $zip->numFiles > $max_zip_entries ) {
+				$zip->close();
+				return array(
+					'message' => sprintf(
+						/* translators: %d: maximum files allowed in ZIP */
+						__( 'ZIP contains too many files. Max allowed is %d.', 'vg-classifieds' ),
+						$max_zip_entries
+					),
+					'rows'    => array(),
+				);
+			}
 
 			$rows = array();
 			for ( $i = 0; $i < $zip->numFiles; $i++ ) {
 				$name = $zip->getNameIndex( $i );
+				$source_file = self::normalize_source_filename( $name );
 
-				if ( ! $name || preg_match( '#(^|/)\.\.(/|$)#', $name ) ) {
+				if ( ! $source_file || preg_match( '#(^|/)\.\.(/|$)#', $source_file ) ) {
 					continue;
 				}
 
-				if ( ! preg_match( '/\.(html?|HTML?)$/', $name ) ) {
+				if ( ! preg_match( '/\.(html?|HTML?)$/', $source_file ) ) {
 					continue;
 				}
 
 				$raw = $zip->getFromIndex( $i );
 				if ( false === $raw || '' === trim( $raw ) ) {
-					$rows[] = array( 'file' => $name, 'status' => __( 'Skipped (empty)', 'vg-classifieds' ), 'post_id' => null );
+					$rows[] = array( 'file' => $source_file, 'status' => __( 'Skipped (empty)', 'vg-classifieds' ), 'post_id' => null );
+					continue;
+				}
+				if ( strlen( $raw ) > $max_html_bytes ) {
+					$rows[] = array( 'file' => $source_file, 'status' => __( 'Skipped (file too large)', 'vg-classifieds' ), 'post_id' => null );
 					continue;
 				}
 
 				$hash = hash( 'sha256', $raw );
 
-				$existing = self::find_existing_by_source( $name );
+				$existing = self::find_existing_by_source( $source_file );
 
 				if ( $existing && get_post_meta( $existing, self::META_SOURCE_HASH, true ) === $hash ) {
-					$rows[] = array( 'file' => $name, 'status' => __( 'Skipped (unchanged)', 'vg-classifieds' ), 'post_id' => $existing );
+					$rows[] = array( 'file' => $source_file, 'status' => __( 'Skipped (unchanged)', 'vg-classifieds' ), 'post_id' => $existing );
 					continue;
 				}
 
@@ -347,15 +393,15 @@ if ( ! class_exists( 'NCI_Classifieds_Importer', false ) ) {
 				}
 
 				if ( is_wp_error( $post_id ) ) {
-					$rows[] = array( 'file' => $name, 'status' => $action . ': ' . $post_id->get_error_message(), 'post_id' => null );
+					$rows[] = array( 'file' => $source_file, 'status' => $action . ': ' . $post_id->get_error_message(), 'post_id' => null );
 					continue;
 				}
 
-				update_post_meta( $post_id, self::META_SOURCE_FILE, $name );
+				update_post_meta( $post_id, self::META_SOURCE_FILE, $source_file );
 				update_post_meta( $post_id, self::META_SOURCE_HASH, $hash );
 				update_post_meta( $post_id, self::META_RAW_HTML, $raw );
 
-				$rows[] = array( 'file' => $name, 'status' => $action, 'post_id' => $post_id );
+				$rows[] = array( 'file' => $source_file, 'status' => $action, 'post_id' => $post_id );
 			}
 
 			$zip->close();
@@ -371,6 +417,7 @@ if ( ! class_exists( 'NCI_Classifieds_Importer', false ) ) {
 		}
 
 		private static function find_existing_by_source( $filename ) {
+			$filename = self::normalize_source_filename( $filename );
 			$q = new WP_Query(
 				array(
 					'post_type'      => self::CPT,
@@ -386,6 +433,15 @@ if ( ! class_exists( 'NCI_Classifieds_Importer', false ) ) {
 				)
 			);
 			return ! empty( $q->posts[0] ) ? intval( $q->posts[0] ) : 0;
+		}
+
+		private static function normalize_source_filename( $filename ) {
+			$filename = (string) $filename;
+			$filename = wp_normalize_path( $filename );
+			$filename = preg_replace( '#^\./+#', '', $filename );
+			$filename = preg_replace( '#/+#', '/', $filename );
+			$filename = trim( $filename );
+			return strtolower( $filename );
 		}
 
 		private static function title_from_html( $html ) {
