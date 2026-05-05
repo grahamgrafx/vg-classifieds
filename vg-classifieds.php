@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name:       vg-classifieds
+ * Plugin Name:       Vineyard Gazette Classifieds
  * Plugin URI:        https://github.com/grahamgrafx/vg-classifieds
  * Description:       Imports a ZIP of HTML classifieds into a Classified custom post type.
- * Version:           0.1.0
+ * Version:           0.2.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Graham Smith
@@ -22,6 +22,87 @@ define( 'VG_CLASSIFIEDS_FILE', __FILE__ );
 define( 'VG_CLASSIFIEDS_PATH', plugin_dir_path( __FILE__ ) );
 
 require_once VG_CLASSIFIEDS_PATH . 'includes/class-vg-classifieds-taxonomy.php';
+
+/**
+ * Bootstrap only when the Vineyard Gazette parent plugin is active.
+ */
+function vg_classifieds_bootstrap() {
+	if ( ! defined( 'VG_PLUGIN_VERSION' ) ) {
+		vg_classifieds_deactivate_if_parent_missing();
+		return;
+	}
+
+	load_plugin_textdomain(
+		'vg-classifieds',
+		false,
+		dirname( plugin_basename( VG_CLASSIFIEDS_FILE ) ) . '/languages'
+	);
+
+	if ( class_exists( 'NCI_Classifieds_Importer', false ) ) {
+		NCI_Classifieds_Importer::init();
+	}
+	if ( class_exists( 'VG_Classifieds_Taxonomy', false ) ) {
+		VG_Classifieds_Taxonomy::init();
+	}
+
+	// Hide byline/date (and author bio via theme behavior) only for classifieds views.
+	add_filter( 'newspack_listings_hide_author', 'vg_classifieds_hide_author_meta', 10, 1 );
+	add_filter( 'newspack_listings_hide_publish_date', 'vg_classifieds_hide_publish_date_meta', 10, 1 );
+}
+add_action( 'plugins_loaded', 'vg_classifieds_bootstrap', 20 );
+
+/**
+ * Deactivate this plugin when parent dependency is unavailable.
+ */
+function vg_classifieds_deactivate_if_parent_missing() {
+	if ( ! is_admin() || ! current_user_can( 'activate_plugins' ) ) {
+		return;
+	}
+
+	require_once ABSPATH . 'wp-admin/includes/plugin.php';
+	deactivate_plugins( plugin_basename( __FILE__ ), true );
+}
+
+/**
+ * Whether the current request is for classifieds single or archive.
+ *
+ * @return bool
+ */
+function vg_classifieds_is_frontend_classifieds_view() {
+	if ( is_admin() ) {
+		return false;
+	}
+
+	return is_singular( NCI_Classifieds_Importer::CPT ) || is_post_type_archive( NCI_Classifieds_Importer::CPT );
+}
+
+/**
+ * Hide author meta for classifieds single/archive only.
+ *
+ * @param bool $hide Current hide state.
+ * @return bool
+ */
+function vg_classifieds_hide_author_meta( $hide ) {
+	if ( vg_classifieds_is_frontend_classifieds_view() ) {
+		return true;
+	}
+
+	return $hide;
+}
+
+/**
+ * Hide publish date meta for classifieds single/archive only.
+ *
+ * @param bool $hide Current hide state.
+ * @return bool
+ */
+function vg_classifieds_hide_publish_date_meta( $hide ) {
+	if ( vg_classifieds_is_frontend_classifieds_view() ) {
+		return true;
+	}
+
+	return $hide;
+}
 
 /**
  * Flush rewrite rules after CPT and taxonomy are registered (new installs / permalink changes).
@@ -96,7 +177,7 @@ if ( ! class_exists( 'NCI_Classifieds_Importer', false ) ) {
 			);
 			if ( $show ) {
 				echo '<div class="notice notice-error"><p>';
-				echo esc_html__( 'vg-classifieds: The PHP Zip extension (ZipArchive) is required for ZIP imports. Ask your host to enable it.', 'vg-classifieds' );
+				echo esc_html__( 'Vineyard Gazette Classifieds: The PHP Zip extension (ZipArchive) is required for ZIP imports. Ask your host to enable it.', 'vg-classifieds' );
 				echo '</p></div>';
 			}
 		}
@@ -328,20 +409,3 @@ if ( ! class_exists( 'NCI_Classifieds_Importer', false ) ) {
 	}
 }
 
-add_action(
-	'plugins_loaded',
-	static function () {
-		load_plugin_textdomain(
-			'vg-classifieds',
-			false,
-			dirname( plugin_basename( VG_CLASSIFIEDS_FILE ) ) . '/languages'
-		);
-		if ( class_exists( 'NCI_Classifieds_Importer', false ) ) {
-			NCI_Classifieds_Importer::init();
-		}
-		if ( class_exists( 'VG_Classifieds_Taxonomy', false ) ) {
-			VG_Classifieds_Taxonomy::init();
-		}
-	},
-	5
-);

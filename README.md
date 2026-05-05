@@ -1,8 +1,10 @@
-# vg-classifieds
+# Vineyard Gazette Classifieds
 
-vg-classifieds is a WordPress plugin that imports a ZIP of HTML files into the `vg_classified` custom post type.
+Vineyard Gazette Classifieds is a WordPress plugin that imports a ZIP of HTML files into the `vg_classified` custom post type.
 
 **Requirements:** WordPress 6.0+; PHP 7.4+ with the Zip extension (`ZipArchive`) enabled.
+
+**Dependency:** Requires the `vineyard-gazette` parent plugin (checks for `VG_PLUGIN_VERSION`).
 
 **Newspack:** Intended to run alongside [Newspack Plugin](https://github.com/Automattic/newspack-plugin). Development is checked against Newspack **6.x**; the reference version used for that check is **6.32.0**. Earlier Newspack majors are not validated here—test on a staging site before relying on them.
 
