@@ -3,7 +3,7 @@
  * Plugin Name:       Vineyard Gazette Classifieds
  * Plugin URI:        https://github.com/grahamgrafx/vg-classifieds
  * Description:       Imports a ZIP of HTML classifieds into a Classified custom post type.
- * Version:           0.2.0
+ * Version:           0.3.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Graham Smith
@@ -17,11 +17,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'VG_CLASSIFIEDS_VERSION', '0.1.0' );
+define( 'VG_CLASSIFIEDS_VERSION', '0.3.0' );
 define( 'VG_CLASSIFIEDS_FILE', __FILE__ );
 define( 'VG_CLASSIFIEDS_PATH', plugin_dir_path( __FILE__ ) );
 
 require_once VG_CLASSIFIEDS_PATH . 'includes/class-vg-classifieds-taxonomy.php';
+require_once VG_CLASSIFIEDS_PATH . 'includes/class-vg-classifieds-schedule.php';
+require_once VG_CLASSIFIEDS_PATH . 'includes/class-vg-classifieds-scheduler.php';
+require_once VG_CLASSIFIEDS_PATH . 'includes/class-vg-classifieds-admin-schedule.php';
 
 /**
  * Bootstrap only when the Vineyard Gazette parent plugin is active.
@@ -44,12 +47,31 @@ function vg_classifieds_bootstrap() {
 	if ( class_exists( 'VG_Classifieds_Taxonomy', false ) ) {
 		VG_Classifieds_Taxonomy::init();
 	}
+	if ( class_exists( 'VG_Classifieds_Schedule', false ) ) {
+		VG_Classifieds_Schedule::init();
+	}
+	if ( class_exists( 'VG_Classifieds_Scheduler', false ) ) {
+		VG_Classifieds_Scheduler::init();
+	}
+	if ( is_admin() && class_exists( 'VG_Classifieds_Admin_Schedule', false ) ) {
+		VG_Classifieds_Admin_Schedule::init();
+	}
 
 	// Hide byline/date (and author bio via theme behavior) only for classifieds views.
 	add_filter( 'newspack_listings_hide_author', 'vg_classifieds_hide_author_meta', 10, 1 );
 	add_filter( 'newspack_listings_hide_publish_date', 'vg_classifieds_hide_publish_date_meta', 10, 1 );
 }
 add_action( 'plugins_loaded', 'vg_classifieds_bootstrap', 20 );
+
+/**
+ * Ensure cron is scheduled if activation hook did not run.
+ */
+function vg_classifieds_ensure_cron_scheduled() {
+	if ( class_exists( 'VG_Classifieds_Scheduler', false ) && ! wp_next_scheduled( VG_Classifieds_Scheduler::CRON_HOOK ) ) {
+		VG_Classifieds_Scheduler::schedule_event();
+	}
+}
+add_action( 'init', 'vg_classifieds_ensure_cron_scheduled', 20 );
 
 /**
  * Deactivate this plugin when parent dependency is unavailable.
@@ -114,10 +136,16 @@ function vg_classifieds_activate() {
 	if ( class_exists( 'VG_Classifieds_Taxonomy', false ) ) {
 		VG_Classifieds_Taxonomy::register();
 	}
+	if ( class_exists( 'VG_Classifieds_Scheduler', false ) ) {
+		VG_Classifieds_Scheduler::schedule_event();
+	}
 	flush_rewrite_rules();
 }
 
 function vg_classifieds_deactivate() {
+	if ( class_exists( 'VG_Classifieds_Scheduler', false ) ) {
+		VG_Classifieds_Scheduler::unschedule_event();
+	}
 	flush_rewrite_rules();
 }
 
@@ -464,4 +492,3 @@ if ( ! class_exists( 'NCI_Classifieds_Importer', false ) ) {
 		}
 	}
 }
-
